@@ -55,48 +55,46 @@ export function Dashboard() {
       setIsUploading(true);
       
       try {
-        // Simulate AI processing delay
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        const file = e.target.files[0];
+        const formData = new FormData();
+        formData.append('file', file);
+
+        // Call the real Gemini AI backend
+        const response = await fetch('/api/analyze-report', {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to analyze report');
+        }
+
+        const aiData = await response.json();
         
         // Generate a new document ID
         const newCaseRef = doc(collection(db, 'cases'));
         
-        const mockExtractedData = {
+        // Add IDs to markers
+        const markersWithIds = aiData.markers.map((m: any, index: number) => ({
+          ...m,
+          id: `m${index}`
+        }));
+
+        const reviewCount = markersWithIds.filter((m: any) => m.status !== 'normal').length;
+
+        const extractedData = {
           id: newCaseRef.id,
           userId: user.uid,
-          title: `Report - ${e.target.files[0].name}`,
+          title: `Report - ${file.name}`,
           date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
           status: 'analyzed',
-          reviewCount: Math.floor(Math.random() * 3), // Random 0-2
-          markers: [
-            {
-              id: 'm1',
-              nameEn: 'Hemoglobin',
-              nameAr: 'الهيموجلوبين',
-              value: (10 + Math.random() * 5).toFixed(1),
-              unit: 'g/dL',
-              range: '12.0 - 15.5',
-              status: Math.random() > 0.5 ? 'normal' : 'low',
-              explanationEn: 'Hemoglobin is a protein in your red blood cells that carries oxygen. Levels outside the reference range may indicate various conditions and should be discussed with your doctor.',
-              explanationAr: 'الهيموجلوبين هو بروتين في خلايا الدم الحمراء يحمل الأكسجين. المستويات خارج النطاق المرجعي قد تشير إلى حالات مختلفة ويجب مناقشتها مع طبيبك.'
-            },
-            {
-              id: 'm2',
-              nameEn: 'Thyroid Stimulating Hormone (TSH)',
-              nameAr: 'الهرمون المنبه للغدة الدرقية',
-              value: (0.5 + Math.random() * 4).toFixed(1),
-              unit: 'mIU/L',
-              range: '0.4 - 4.0',
-              status: 'normal',
-              explanationEn: 'TSH measures how well your thyroid gland is working. It helps regulate metabolism.',
-              explanationAr: 'يقيس TSH مدى كفاءة عمل الغدة الدرقية. يساعد في تنظيم عملية التمثيل الغذائي.'
-            }
-          ],
+          reviewCount: reviewCount,
+          markers: markersWithIds,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp()
         };
 
-        await setDoc(newCaseRef, mockExtractedData);
+        await setDoc(newCaseRef, extractedData);
         
         setIsUploading(false);
         navigate(`/case/${newCaseRef.id}`);

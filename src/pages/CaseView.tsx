@@ -129,25 +129,44 @@ export function CaseView() {
   }, [id, user, navigate]);
 
   const handleDownload = () => {
-    setIsDownloading(true);
-    setTimeout(() => setIsDownloading(false), 2000);
+    window.print();
   };
 
-  const handleSendMessage = (e: React.FormEvent) => {
+  const [isChatLoading, setIsChatLoading] = useState(false);
+
+  const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!chatInput.trim()) return;
+    if (!chatInput.trim() || isChatLoading) return;
     
-    setMessages([...messages, { role: 'user', content: chatInput }]);
+    const userMessage = chatInput;
+    setMessages(prev => [...prev, { role: 'user', content: userMessage }]);
     setChatInput('');
+    setIsChatLoading(true);
     
-    setTimeout(() => {
+    try {
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: [...messages, { role: 'user', content: userMessage }],
+          caseData,
+          language
+        })
+      });
+
+      if (!response.ok) throw new Error('Failed to get response');
+      
+      const data = await response.json();
+      setMessages(prev => [...prev, { role: 'assistant', content: data.reply }]);
+    } catch (error) {
+      console.error("Chat error:", error);
       setMessages(prev => [...prev, { 
         role: 'assistant', 
-        content: language === 'en' 
-          ? 'I can explain that. However, please remember I cannot provide medical advice or diagnose conditions. You should consult your doctor for a proper evaluation.' 
-          : 'يمكنني شرح ذلك. ومع ذلك، يرجى تذكر أنني لا أستطيع تقديم نصيحة طبية أو تشخيص الحالات. يجب عليك استشارة طبيبك للحصول على تقييم مناسب.' 
+        content: language === 'en' ? 'Sorry, I encountered an error processing your request.' : 'عذراً، واجهت خطأ أثناء معالجة طلبك.' 
       }]);
-    }, 1000);
+    } finally {
+      setIsChatLoading(false);
+    }
   };
 
   const getStatusIcon = (status: string) => {
@@ -287,12 +306,17 @@ export function CaseView() {
                 type="text"
                 value={chatInput}
                 onChange={(e) => setChatInput(e.target.value)}
-                placeholder={t('chat.placeholder')}
-                className="flex-1 h-10 rounded-full border border-slate-300 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary-500)] focus:border-transparent"
+                placeholder={isChatLoading ? (language === 'en' ? 'AI is thinking...' : 'الذكاء الاصطناعي يفكر...') : t('chat.placeholder')}
+                disabled={isChatLoading}
+                className="flex-1 h-10 rounded-full border border-slate-300 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary-500)] focus:border-transparent disabled:opacity-50 disabled:bg-slate-50"
                 dir={dir}
               />
-              <Button type="submit" size="icon" className="rounded-full shrink-0">
-                <Send className={`h-4 w-4 ${dir === 'rtl' ? 'rotate-180' : ''} ${chatInput ? 'text-white' : 'text-white/70'}`} />
+              <Button type="submit" size="icon" className="rounded-full shrink-0" disabled={isChatLoading || !chatInput.trim()}>
+                {isChatLoading ? (
+                  <Loader2 className="h-4 w-4 animate-spin text-white" />
+                ) : (
+                  <Send className={`h-4 w-4 ${dir === 'rtl' ? 'rotate-180' : ''} ${chatInput ? 'text-white' : 'text-white/70'}`} />
+                )}
               </Button>
             </form>
           </div>

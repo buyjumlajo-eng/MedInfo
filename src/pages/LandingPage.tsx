@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLanguage } from '@/src/contexts/LanguageContext';
 import { useAuth } from '@/src/contexts/AuthContext';
@@ -9,6 +9,12 @@ export function LandingPage() {
   const { t, dir } = useLanguage();
   const { user, signInWithGoogle } = useAuth();
   const navigate = useNavigate();
+
+  useEffect(() => {
+    if (user) {
+      navigate('/dashboard');
+    }
+  }, [user, navigate]);
 
   const handleGetStarted = async () => {
     if (user) {

@@ -3,8 +3,6 @@ import cors from 'cors';
 import Stripe from 'stripe';
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
-import multer from 'multer';
-import { GoogleGenAI, Type, Schema } from '@google/genai';
 
 // Initialize Firebase Admin (if service account is provided)
 try {
@@ -34,9 +32,6 @@ app.use(cors({
   methods: ['GET', 'POST'],
   allowedHeaders: ['Content-Type'],
 }));
-
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 4.5 * 1024 * 1024 } }); // 4.5MB limit for Vercel
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 // --- STRIPE WEBHOOK (Must be before express.json) ---
 app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
@@ -134,118 +129,6 @@ app.post('/api/create-checkout-session', async (req, res) => {
   } catch (error: any) {
     console.error('Stripe error:', error);
     res.status(500).json({ error: error.message });
-  }
-});
-
-// AI Analysis Route
-app.post('/api/analyze-report', upload.single('file'), async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'No file uploaded' });
-    }
-
-    const schema: Schema = {
-      type: Type.OBJECT,
-      properties: {
-        markers: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              nameEn: { type: Type.STRING },
-              nameAr: { type: Type.STRING },
-              value: { type: Type.STRING },
-              unit: { type: Type.STRING },
-              range: { type: Type.STRING },
-              status: { type: Type.STRING, enum: ['normal', 'low', 'high'] },
-              explanationEn: { type: Type.STRING },
-              explanationAr: { type: Type.STRING }
-            },
-            required: ['nameEn', 'nameAr', 'value', 'unit', 'range', 'status', 'explanationEn', 'explanationAr']
-          }
-        }
-      },
-      required: ['markers']
-    };
-
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: [
-        {
-          role: 'user',
-          parts: [
-            {
-              inlineData: {
-                data: req.file.buffer.toString('base64'),
-                mimeType: req.file.mimetype
-              }
-            },
-            { text: "Analyze this medical report. Extract all the medical markers, their values, units, and reference ranges. Determine if the status is normal, low, or high based on the reference range. Provide a brief, easy-to-understand explanation of what each marker means in both English and Arabic." }
-          ]
-        }
-      ],
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema: schema,
-      }
-    });
-
-    const resultText = response.text;
-    if (!resultText) throw new Error("No response from Gemini");
-    
-    const parsedData = JSON.parse(resultText);
-    res.json(parsedData);
-
-  } catch (error: any) {
-    console.error('AI Analysis Error:', error);
-    res.status(500).json({ error: error.message || 'Failed to analyze report' });
-  }
-});
-
-// AI Chat Route
-app.post('/api/chat', async (req, res) => {
-  try {
-    const { messages, caseData, language } = req.body;
-
-    if (!messages || !caseData) {
-      return res.status(400).json({ error: 'Missing required fields' });
-    }
-
-    const systemPrompt = `You are a helpful medical AI assistant. You are answering questions about a specific medical report. 
-    Here is the data from the report: ${JSON.stringify(caseData.markers)}
-    
-    IMPORTANT RULES:
-    1. Answer in ${language === 'ar' ? 'Arabic' : 'English'}.
-    2. Be concise and easy to understand.
-    3. ALWAYS include a disclaimer that you are an AI and cannot provide official medical diagnoses, and that the user should consult a doctor.
-    4. Only answer questions related to the provided medical report data.`;
-
-    // Format messages for Gemini
-    const formattedMessages = messages.map((msg: any) => ({
-      role: msg.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: msg.content }]
-    }));
-
-    // Prepend system prompt as a user message (since system instructions are handled differently in some SDK versions, this is a safe fallback)
-    formattedMessages.unshift({
-      role: 'user',
-      parts: [{ text: systemPrompt }]
-    });
-    formattedMessages.push({
-      role: 'model',
-      parts: [{ text: "Understood. I will follow these instructions." }]
-    });
-
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: formattedMessages
-    });
-
-    res.json({ reply: response.text });
-
-  } catch (error: any) {
-    console.error('AI Chat Error:', error);
-    res.status(500).json({ error: error.message || 'Failed to generate chat response' });
   }
 });
 

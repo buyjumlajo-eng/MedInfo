@@ -1,0 +1,119 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {userId} (matches auth.uid)
+    // Fields:
+    //   - uid: string (required, immutable, matches auth.uid)
+    //   - email: string (required)
+    //   - displayName: string (optional)
+    //   - tier: string (required, 'free' or 'pro')
+    //   - createdAt: timestamp (required, immutable)
+    //
+    // Collection: cases
+    // Document ID: {caseId}
+    // Fields:
+    //   - id: string (required, immutable)
+    //   - userId: string (required, immutable, matches auth.uid)
+    //   - title: string (required)
+    //   - date: string (required)
+    //   - status: string (required, 'pending' or 'analyzed')
+    //   - reviewCount: number (optional)
+    //   - markers: list (optional)
+    //   - createdAt: timestamp (required, immutable)
+    //   - updatedAt: timestamp (required)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isDocOwner() {
+      return isAuthenticated() && request.auth.uid == resource.data.userId;
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function areImmutableFieldsUnchanged(fields) {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+    function isValidUser(data) {
+      return hasRequiredFields(['uid', 'email', 'tier', 'createdAt']) &&
+             data.uid is string && data.uid == request.auth.uid &&
+             data.email is string && isValidEmail(data.email) &&
+             (!('displayName' in data) || (data.displayName is string && data.displayName.size() < 100)) &&
+             data.tier in ['free', 'pro'] &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidCase(data) {
+      return hasRequiredFields(['id', 'userId', 'title', 'date', 'status', 'createdAt', 'updatedAt']) &&
+             data.id is string && data.id.size() > 0 &&
+             data.userId is string && data.userId == request.auth.uid &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
+             data.date is string && data.date.size() > 0 && data.date.size() < 50 &&
+             data.status in ['pending', 'analyzed'] &&
+             (!('reviewCount' in data) || (data.reviewCount is number && data.reviewCount >= 0)) &&
+             (!('markers' in data) || (data.markers is list && data.markers.size() <= 100)) &&
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+    
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && 
+                       isValidUser(request.resource.data) &&
+                       hasOnlyAllowedFields(['uid', 'email', 'displayName', 'tier', 'createdAt']) &&
+                       request.resource.data.tier == 'free'; // Users always start as free
+      allow update: if isOwner(userId) && 
+                       isValidUser(request.resource.data) &&
+                       hasOnlyAllowedFields(['uid', 'email', 'displayName', 'tier', 'createdAt']) &&
+                       areImmutableFieldsUnchanged(['uid', 'createdAt', 'tier']); // Tier can only be updated by backend
+      allow delete: if false; // Users cannot delete their own profile directly
+    }
+
+    match /cases/{caseId} {
+      allow read: if isDocOwner();
+      allow create: if isAuthenticated() && 
+                       isValidCase(request.resource.data) &&
+                       hasOnlyAllowedFields(['id', 'userId', 'title', 'date', 'status', 'reviewCount', 'markers', 'createdAt', 'updatedAt']) &&
+                       request.resource.data.userId == request.auth.uid;
+      allow update: if isDocOwner() && 
+                       isValidCase(request.resource.data) &&
+                       hasOnlyAllowedFields(['id', 'userId', 'title', 'date', 'status', 'reviewCount', 'markers', 'createdAt', 'updatedAt']) &&
+                       areImmutableFieldsUnchanged(['id', 'userId', 'createdAt']);
+      allow delete: if isDocOwner();
+    }
+  }
+}

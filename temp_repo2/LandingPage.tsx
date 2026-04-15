@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLanguage } from '@/src/contexts/LanguageContext';
 import { useAuth } from '@/src/contexts/AuthContext';
@@ -9,7 +9,7 @@ export function LandingPage() {
   const { t, dir } = useLanguage();
   const { user, signInWithGoogle } = useAuth();
   const navigate = useNavigate();
-  const [loginError, setLoginError] = useState<string | null>(null);
+  const [demoMessage, setDemoMessage] = useState(false);
 
   useEffect(() => {
     if (user) {
@@ -18,31 +18,28 @@ export function LandingPage() {
   }, [user, navigate]);
 
   const handleGetStarted = async () => {
-    setLoginError(null);
     if (user) {
       navigate('/dashboard');
     } else {
       try {
         await signInWithGoogle();
         navigate('/dashboard');
-      } catch (error: any) {
+      } catch (error) {
         console.error("Login failed:", error);
-        setLoginError(error.message || "Failed to sign in. Please try again.");
       }
     }
   };
 
   const handleViewDemo = async () => {
-    setLoginError(null);
     if (user) {
       navigate('/case/1');
     } else {
+      // Sign in first, then redirect to demo — ProtectedRoute requires auth
       try {
         await signInWithGoogle();
         navigate('/case/1');
-      } catch (error: any) {
+      } catch (error) {
         console.error("Login failed:", error);
-        setLoginError(error.message || "Failed to sign in. Please try again.");
       }
     }
   };
@@ -61,18 +58,6 @@ export function LandingPage() {
       <p className="text-xl text-slate-600 max-w-2xl mb-10 leading-relaxed">
         {t('hero.subtitle')}
       </p>
-
-      {loginError && (
-        <div className="mb-6 p-4 bg-red-50 border border-red-200 text-red-700 rounded-lg max-w-md w-full text-sm">
-          <p className="font-semibold mb-1">Login Error</p>
-          <p>{loginError}</p>
-          {loginError.includes('unauthorized-domain') && (
-            <p className="mt-2 text-xs">
-              <strong>Note:</strong> You need to add this website's domain to your Firebase Authorized Domains list in the Firebase Console (Authentication &gt; Settings &gt; Authorized domains).
-            </p>
-          )}
-        </div>
-      )}
       
       <div className="flex flex-col sm:flex-row gap-4">
         <Button size="lg" className="w-full sm:w-auto text-base h-12 px-8" onClick={handleGetStarted}>

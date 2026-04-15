@@ -27,42 +27,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    let unsubscribeSnapshot: () => void;
+    let unsubscribeSnapshot: (() => void) | undefined;
 
     const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
       
       if (currentUser) {
-        try {
-          const userRef = doc(db, 'users', currentUser.uid);
-          const userSnap = await getDoc(userRef);
-          
-          if (!userSnap.exists()) {
-            try {
-              const userData: any = {
-                uid: currentUser.uid,
-                email: currentUser.email || '',
-                tier: 'free',
-                createdAt: serverTimestamp()
-              };
-              if (currentUser.displayName) {
-                userData.displayName = currentUser.displayName;
-              }
-              await setDoc(userRef, userData);
-            } catch (error) {
-              console.error("Error creating user profile:", error);
-            }
+        const userRef = doc(db, 'users', currentUser.uid);
+        const userSnap = await getDoc(userRef);
+        
+        if (!userSnap.exists()) {
+          try {
+            await setDoc(userRef, {
+              uid: currentUser.uid,
+              email: currentUser.email,
+              displayName: currentUser.displayName,
+              tier: 'free',
+              createdAt: serverTimestamp()
+            });
+          } catch (error) {
+            console.error("Error creating user profile:", error);
           }
-
-          // Listen to profile changes (e.g., tier upgrades)
-          unsubscribeSnapshot = onSnapshot(userRef, (docSnap) => {
-            if (docSnap.exists()) {
-              setUserProfile(docSnap.data() as UserProfile);
-            }
-          });
-        } catch (error) {
-          console.error("Error fetching user profile:", error);
         }
+
+        // Listen to profile changes (e.g., tier upgrades)
+        unsubscribeSnapshot = onSnapshot(userRef, (docSnap) => {
+          if (docSnap.exists()) {
+            setUserProfile(docSnap.data() as UserProfile);
+          }
+        });
       } else {
         setUserProfile(null);
         if (unsubscribeSnapshot) unsubscribeSnapshot();

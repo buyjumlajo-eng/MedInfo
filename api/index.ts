@@ -35,8 +35,13 @@ app.use(cors({
   allowedHeaders: ['Content-Type'],
 }));
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 4.5 * 1024 * 1024 } }); // 4.5MB limit for Vercel
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const upload = multer({ 
+  storage: multer.memoryStorage(), 
+  limits: { fileSize: 10 * 1024 * 1024 } // Increased to 10MB to accommodate larger PDFs
+});
+const rawKey = process.env.GEMINI_API_KEY || '';
+const apiKey = rawKey.replace(/^["']|["']$/g, '').trim();
+const ai = typeof apiKey === 'string' && apiKey.length > 0 ? new GoogleGenAI({ apiKey }) : new GoogleGenAI({});
 
 // --- STRIPE WEBHOOK (Must be before express.json) ---
 app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
@@ -138,7 +143,16 @@ app.post('/api/create-checkout-session', async (req, res) => {
 });
 
 // AI Analysis Route
-app.post('/api/analyze-report', upload.single('file'), async (req, res) => {
+app.post('/api/analyze-report', (req, res, next) => {
+  upload.single('file')(req, res, (err) => {
+    if (err instanceof multer.MulterError) {
+      return res.status(400).json({ error: err.message });
+    } else if (err) {
+      return res.status(500).json({ error: 'Unknown upload error' });
+    }
+    next();
+  });
+}, async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
@@ -157,7 +171,7 @@ app.post('/api/analyze-report', upload.single('file'), async (req, res) => {
               value: { type: Type.STRING },
               unit: { type: Type.STRING },
               range: { type: Type.STRING },
-              status: { type: Type.STRING, enum: ['normal', 'low', 'high'] },
+              status: { type: Type.STRING, description: "Must be 'normal', 'low', or 'high'" },
               explanationEn: { type: Type.STRING },
               explanationAr: { type: Type.STRING }
             },
@@ -190,10 +204,22 @@ app.post('/api/analyze-report', upload.single('file'), async (req, res) => {
       }
     });
 
-    const resultText = response.text;
+    let resultText = response.text;
     if (!resultText) throw new Error("No response from Gemini");
     
-    const parsedData = JSON.parse(resultText);
+    // Robustly extract JSON block if it's wrapped in markdown or surrounded by text
+    const jsonMatch = resultText.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+    let jsonString = jsonMatch ? jsonMatch[1] : resultText.trim();
+    
+    // Fallback if there are still prepended/appended strings but it starts with '{'
+    if (!jsonString.startsWith('{') && jsonString.includes('{')) {
+      jsonString = jsonString.substring(jsonString.indexOf('{'), jsonString.lastIndexOf('}') + 1);
+    }
+    
+    const parsedData = JSON.parse(jsonString);
+    if (!parsedData.markers || !Array.isArray(parsedData.markers)) {
+      parsedData.markers = [];
+    }
     res.json(parsedData);
 
   } catch (error: any) {

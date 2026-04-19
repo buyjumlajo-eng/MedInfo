@@ -14,8 +14,9 @@ export function AppLayout() {
     try {
       await signInWithGoogle();
       navigate('/dashboard');
-    } catch (error) {
+    } catch (error: any) {
       console.error("Login failed:", error);
+      alert(`Login failed: ${error.message || 'Unknown error'}`);
     }
   };
 

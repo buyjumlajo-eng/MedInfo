@@ -7,7 +7,8 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/src
 import { Badge } from '@/src/components/ui/Badge';
 import { FileText, Plus, ArrowRight, Zap, Loader2 } from 'lucide-react';
 import { collection, query, where, orderBy, onSnapshot, doc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from '@/src/firebase';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { db, storage } from '@/src/firebase';
 
 export function Dashboard() {
   const { t, dir } = useLanguage();
@@ -17,14 +18,15 @@ export function Dashboard() {
   const [isUploading, setIsUploading] = useState(false);
   const [cases, setCases] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [filterType, setFilterType] = useState('all');
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!user) return;
 
     const q = query(
       collection(db, 'cases'),
-      where('userId', '==', user.uid),
-      orderBy('createdAt', 'desc')
+      where('userId', '==', user.uid)
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -32,6 +34,13 @@ export function Dashboard() {
         id: doc.id,
         ...doc.data()
       }));
+      // Sort in memory by createdAt desc
+      casesData.sort((a: any, b: any) => {
+        const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
+        const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
+        return timeB - timeA;
+      });
+      
       setCases(casesData);
       setLoading(false);
     }, (error) => {
@@ -53,11 +62,23 @@ export function Dashboard() {
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0 && user) {
       setIsUploading(true);
+      setUploadError(null);
       
       try {
         const file = e.target.files[0];
         const formData = new FormData();
         formData.append('file', file);
+
+        // Upload to Firebase Storage
+        let fileUrl = '';
+        try {
+          const storageRef = ref(storage, `users/${user.uid}/reports/${Date.now()}_${file.name}`);
+          const snapshot = await uploadBytes(storageRef, file);
+          fileUrl = await getDownloadURL(snapshot.ref);
+        } catch (storageErr: any) {
+          console.error("Storage upload failed, continuing without saving file:", storageErr);
+          // Don't fail the whole process if just the storage upload fails, maybe rules aren't set
+        }
 
         // Call the real Gemini AI backend
         const response = await fetch('/api/analyze-report', {
@@ -66,7 +87,8 @@ export function Dashboard() {
         });
 
         if (!response.ok) {
-          throw new Error('Failed to analyze report');
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData.error || 'Failed to analyze report using AI. Ensure the file is a clear image or PDF.');
         }
 
         const aiData = await response.json();
@@ -90,6 +112,7 @@ export function Dashboard() {
           status: 'analyzed',
           reviewCount: reviewCount,
           markers: markersWithIds,
+          fileUrl: fileUrl,  // Keep the url
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp()
         };
@@ -98,10 +121,14 @@ export function Dashboard() {
         
         setIsUploading(false);
         navigate(`/case/${newCaseRef.id}`);
-      } catch (error) {
+      } catch (error: any) {
         console.error("Error uploading case:", error);
-        alert("Failed to process report. Please try again.");
+        setUploadError(`Failed to process report: ${error.message}`);
         setIsUploading(false);
+      } finally {
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+        }
       }
     }
   };
@@ -112,6 +139,16 @@ export function Dashboard() {
     if (reviewCount > 0) return { variant: 'warning' as const, label: 'case.status.review', dotClass: 'bg-[var(--color-urgency-warning)]' };
     return { variant: 'success' as const, label: 'case.status.normal', dotClass: 'bg-[var(--color-urgency-normal)]' };
   };
+
+  const filteredCases = cases.filter(c => {
+    if (filterType === 'all') return true;
+    const reviewCount = c.reviewCount || 0;
+    if (filterType === 'normal') return reviewCount === 0;
+    if (filterType === 'review') return reviewCount > 0 && reviewCount <= 3;
+    if (filterType === 'warning') return reviewCount > 3 && reviewCount <= 7;
+    if (filterType === 'critical') return reviewCount > 7;
+    return true;
+  });
 
   return (
     <div className="max-w-5xl mx-auto">
@@ -143,6 +180,40 @@ export function Dashboard() {
         </Button>
       </div>
 
+      {uploadError && (
+        <div className="mb-6 rounded-lg bg-red-50 border border-red-200 p-4 shrink-0 shadow-sm animate-in fade-in slide-in-from-top-2">
+          <div className="flex gap-3">
+            <div className="shrink-0">
+              <svg className="h-5 w-5 text-red-500 mt-0.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z" clipRule="evenodd" />
+              </svg>
+            </div>
+            <div>
+              <h3 className="font-semibold text-red-800 text-sm">Upload Processing Error</h3>
+              <p className="mt-1 flex text-sm text-red-700 leading-relaxed block">{uploadError}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-2 mb-6" dir={dir}>
+        <Button variant={filterType === 'all' ? 'default' : 'outline'} size="sm" onClick={() => setFilterType('all')}>
+          {t('dashboard.filter.all')}
+        </Button>
+        <Button variant={filterType === 'normal' ? 'default' : 'outline'} size="sm" onClick={() => setFilterType('normal')}>
+          {t('case.status.normal')}
+        </Button>
+        <Button variant={filterType === 'review' ? 'default' : 'outline'} size="sm" onClick={() => setFilterType('review')}>
+          {t('case.status.review')}
+        </Button>
+        <Button variant={filterType === 'warning' ? 'default' : 'outline'} size="sm" onClick={() => setFilterType('warning')}>
+          {t('case.status.warning')}
+        </Button>
+        <Button variant={filterType === 'critical' ? 'default' : 'outline'} size="sm" onClick={() => setFilterType('critical')}>
+          {t('case.status.critical')}
+        </Button>
+      </div>
+
       {/* Hidden File Input */}
       <input 
         type="file" 
@@ -159,28 +230,30 @@ export function Dashboard() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {/* Upload Card */}
-          <Card 
-            onClick={handleUploadClick}
-            className={`border-dashed border-2 border-slate-300 bg-slate-50 transition-colors flex flex-col items-center justify-center min-h-[200px] ${isUploading ? 'opacity-70 cursor-wait' : 'hover:bg-slate-100 cursor-pointer'}`}
-          >
-            {isUploading ? (
-              <div className="flex flex-col items-center animate-pulse">
-                <div className="h-12 w-12 rounded-full bg-slate-200 mb-4"></div>
-                <p className="font-medium text-slate-900">Processing...</p>
-              </div>
-            ) : (
-              <>
-                <div className="h-12 w-12 rounded-full bg-slate-200 flex items-center justify-center mb-4">
-                  <Plus className="h-6 w-6 text-slate-600" />
+          {(filterType === 'all' || cases.length === 0) && (
+            <Card 
+              onClick={handleUploadClick}
+              className={`border-dashed border-2 border-slate-300 bg-slate-50 transition-colors flex flex-col items-center justify-center min-h-[200px] ${isUploading ? 'opacity-70 cursor-wait' : 'hover:bg-slate-100 cursor-pointer'}`}
+            >
+              {isUploading ? (
+                <div className="flex flex-col items-center animate-pulse">
+                  <div className="h-12 w-12 rounded-full bg-slate-200 mb-4"></div>
+                  <p className="font-medium text-slate-900">Processing...</p>
                 </div>
-                <p className="font-medium text-slate-900">{t('case.upload')}</p>
-                <p className="text-sm text-slate-500 mt-1">PDF, JPG, PNG</p>
-              </>
-            )}
-          </Card>
+              ) : (
+                <>
+                  <div className="h-12 w-12 rounded-full bg-slate-200 flex items-center justify-center mb-4">
+                    <Plus className="h-6 w-6 text-slate-600" />
+                  </div>
+                  <p className="font-medium text-slate-900">{t('case.upload')}</p>
+                  <p className="text-sm text-slate-500 mt-1">PDF, JPG, PNG</p>
+                </>
+              )}
+            </Card>
+          )}
 
           {/* Case Cards */}
-          {cases.map((c) => {
+          {filteredCases.map((c) => {
             const urgency = getUrgencyInfo(c.reviewCount || 0);
             return (
               <Link key={c.id} to={`/case/${c.id}`} className="block group">
@@ -225,6 +298,17 @@ export function Dashboard() {
               </Link>
             );
           })}
+          
+          {/* Empty State for Filters */}
+          {cases.length > 0 && filteredCases.length === 0 && (
+            <div className="col-span-1 md:col-span-2 lg:col-span-3 py-10 flex flex-col items-center justify-center border-2 border-dashed border-slate-200 rounded-lg bg-slate-50">
+              <FileText className="h-10 w-10 text-slate-300 mb-3" />
+              <p className="text-slate-500 font-medium">No cases found matching this filter.</p>
+              <Button variant="ghost" className="mt-2 text-slate-600" onClick={() => setFilterType('all')}>
+                Clear Filter
+              </Button>
+            </div>
+          )}
         </div>
       )}
     </div>

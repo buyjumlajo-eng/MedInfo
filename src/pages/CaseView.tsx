@@ -132,6 +132,45 @@ export function CaseView() {
     window.print();
   };
 
+  const handleExportJSON = () => {
+    if (!caseData) return;
+    const dataStr = JSON.stringify(caseData, null, 2);
+    const blob = new Blob([dataStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `case-${caseData.id}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleExportCSV = () => {
+    if (!caseData || !caseData.markers) return;
+    
+    const headers = ['Name (EN)', 'Name (AR)', 'Value', 'Unit', 'Range', 'Status', 'Explanation (EN)', 'Explanation (AR)'];
+    const rows = caseData.markers.map((m: any) => [
+      `"${m.nameEn || ''}"`,
+      `"${m.nameAr || ''}"`,
+      `"${m.value || ''}"`,
+      `"${m.unit || ''}"`,
+      `"${m.range || ''}"`,
+      `"${m.status || ''}"`,
+      `"${(m.explanationEn || '').replace(/"/g, '""')}"`,
+      `"${(m.explanationAr || '').replace(/"/g, '""')}"`
+    ]);
+    
+    const csvContent = [headers.join(','), ...rows.map((row: any[]) => row.join(','))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `case-markers-${caseData.id}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   const [isChatLoading, setIsChatLoading] = useState(false);
 
   const handleSendMessage = async (e: React.FormEvent) => {
@@ -211,7 +250,7 @@ export function CaseView() {
   return (
     <div className="max-w-7xl mx-auto h-[calc(100vh-8rem)] flex flex-col">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6 shrink-0">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 shrink-0">
         <div className="flex items-center gap-4">
           <Link to="/dashboard" className="p-2 hover:bg-slate-100 rounded-full transition-colors">
             <ArrowLeft className={`h-5 w-5 text-slate-600 ${dir === 'rtl' ? 'rotate-180' : ''}`} />
@@ -221,10 +260,26 @@ export function CaseView() {
             <p className="text-sm text-slate-500">{caseData.date}</p>
           </div>
         </div>
-        <Button variant="outline" className="flex items-center gap-2" onClick={handleDownload} disabled={isDownloading}>
-          <Download className="h-4 w-4" />
-          <span className="hidden sm:inline">{isDownloading ? 'Downloading...' : t('report.download')}</span>
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {caseData.fileUrl && (
+            <Button variant="outline" className="flex items-center gap-2" size="sm" onClick={() => window.open(caseData.fileUrl, '_blank')}>
+              <FileText className="h-4 w-4" />
+              <span className="hidden sm:inline">{language === 'en' ? 'View PDF' : 'عرض PDF'}</span>
+            </Button>
+          )}
+          <Button variant="outline" className="flex items-center gap-2" size="sm" onClick={handleExportCSV}>
+            <Download className="h-4 w-4" />
+            <span>CSV</span>
+          </Button>
+          <Button variant="outline" className="flex items-center gap-2" size="sm" onClick={handleExportJSON}>
+            <Download className="h-4 w-4" />
+            <span>JSON</span>
+          </Button>
+          <Button variant="outline" className="flex items-center gap-2" size="sm" onClick={handleDownload} disabled={isDownloading}>
+            <Download className="h-4 w-4" />
+            <span className="hidden sm:inline">{isDownloading ? 'Downloading...' : t('report.download')}</span>
+          </Button>
+        </div>
       </div>
 
       {/* Main Content Split */}
